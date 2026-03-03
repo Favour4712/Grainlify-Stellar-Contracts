@@ -594,7 +594,10 @@ fn test_batch_initialize_programs_success() {
         authorized_payout_key: admin.clone(),
         token_address: token.clone(),
     });
-    let count = client.try_batch_initialize_programs(&items).unwrap().unwrap();
+    let count = client
+        .try_batch_initialize_programs(&items)
+        .unwrap()
+        .unwrap();
     assert_eq!(count, 2);
     assert!(client.program_exists());
     assert!(client.program_exists());
@@ -687,7 +690,7 @@ fn test_analytics_after_single_payout() {
     let env = Env::default();
     let initial_funds = 100_000_0000000i128;
     let payout_amount = 25_000_0000000i128;
-    
+
     let (client, _admin, _token, _token_admin) = setup_program(&env, initial_funds);
 
     let recipient = Address::generate(&env);
@@ -764,16 +767,8 @@ fn test_analytics_with_schedules() {
     let recipient2 = Address::generate(&env);
     let future_timestamp = env.ledger().timestamp() + 1000;
 
-    client.create_program_release_schedule(
-        &20_000_0000000,
-        &future_timestamp,
-        &recipient1,
-    );
-    client.create_program_release_schedule(
-        &30_000_0000000,
-        &(future_timestamp + 100),
-        &recipient2,
-    );
+    client.create_program_release_schedule(&20_000_0000000, &future_timestamp, &recipient1);
+    client.create_program_release_schedule(&30_000_0000000, &(future_timestamp + 100), &recipient2);
 
     let stats = client.get_program_aggregate_stats();
 
@@ -791,11 +786,7 @@ fn test_analytics_after_releasing_schedules() {
     let recipient = Address::generate(&env);
     let release_timestamp = env.ledger().timestamp() + 50;
 
-    client.create_program_release_schedule(
-        &20_000_0000000,
-        &release_timestamp,
-        &recipient,
-    );
+    client.create_program_release_schedule(&20_000_0000000, &release_timestamp, &recipient);
 
     // Advance time and trigger releases
     env.ledger().set_timestamp(release_timestamp + 1);
@@ -839,19 +830,11 @@ fn test_health_due_schedules() {
     let now = env.ledger().timestamp();
 
     // Create schedule due now
-    client.create_program_release_schedule(
-        &10_000_0000000,
-        &now,
-        &recipient,
-    );
+    client.create_program_release_schedule(&10_000_0000000, &now, &recipient);
 
     // Create future schedule
     let recipient2 = Address::generate(&env);
-    client.create_program_release_schedule(
-        &15_000_0000000,
-        &(now + 1000),
-        &recipient2,
-    );
+    client.create_program_release_schedule(&15_000_0000000, &(now + 1000), &recipient2);
 
     // Check due schedules
     let due = client.get_due_schedules();
@@ -1287,7 +1270,7 @@ fn test_batch_payout_sequential_batches() {
     assert_eq!(record3.amount, 4_000_000);
 }
 
-// PROGRAM ESCROW HISTORY QUERY FILTER TESTS 
+// PROGRAM ESCROW HISTORY QUERY FILTER TESTS
 // Tests for recipient, amount, timestamp filters + pagination on payout history
 
 #[test]
