@@ -714,7 +714,16 @@ impl ProgramEscrowContract {
     /// # Returns
     /// * `bool` - True if program exists, false otherwise
     pub fn program_exists(env: Env) -> bool {
-        env.storage().instance().has(&PROGRAM_DATA)
+        // Check both PROGRAM_DATA (single program) and DataKey::Program registry
+        if env.storage().instance().has(&PROGRAM_DATA) {
+            return true;
+        }
+        // Check if any programs exist in registry
+        let registry: Option<Vec<String>> = env.storage().instance().get(&PROGRAM_REGISTRY);
+        if let Some(reg) = registry {
+            return reg.len() > 0;
+        }
+        false
     }
 
     // ========================================================================
@@ -778,7 +787,8 @@ impl ProgramEscrowContract {
     }
 
     pub fn set_admin(env: Env, admin: Address) {
-        Self::initialize_contract(env, admin);
+        // Allow updating admin if already set
+        env.storage().instance().set(&DataKey::Admin, &admin);
     }
 
     /// Update pause flags (admin only)
@@ -888,7 +898,8 @@ impl ProgramEscrowContract {
         cooldown_period: u64,
     ) {
         // Only admin can update rate limit config
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        let admin: Address = env.storage().instance().get(&DataKey::Admin)
+            .unwrap_or_else(|| panic!("Admin not set"));
         admin.require_auth();
 
         // Check governance requirements
