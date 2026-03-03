@@ -440,6 +440,29 @@ pub struct AggregateStats {
     pub count_refunded: u32,
 }
 
+/// Composite filter for querying escrows.
+/// Multiple filters can be combined for rich querying capabilities.
+///
+/// To indicate "no filter" for a field, use these sentinel values:
+/// - has_status_filter: false means ignore status
+/// - has_depositor_filter: false means ignore depositor
+/// - min_amount: 0 means no minimum
+/// - max_amount: i128::MAX means no maximum
+/// - min_deadline: 0 means no minimum
+/// - max_deadline: u64::MAX means no maximum
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowQueryFilter {
+    pub has_status_filter: bool,
+    pub status: EscrowStatus,
+    pub has_depositor_filter: bool,
+    pub depositor: Address,
+    pub min_amount: i128,
+    pub max_amount: i128,
+    pub min_deadline: u64,
+    pub max_deadline: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PauseStateChanged {
@@ -1574,6 +1597,117 @@ impl BountyEscrowContract {
                 .get::<DataKey, Escrow>(&DataKey::Escrow(bounty_id))
             {
                 results.push_back(EscrowWithId { bounty_id, escrow });
+            }
+        }
+        results
+    }
+
+    /// Query escrows with composite filtering and pagination.
+    /// This function enables rich querying by combining multiple filter criteria.
+    ///
+    /// # Performance Optimization
+    /// When a depositor filter is specified (has_depositor_filter = true), this function
+    /// uses the DepositorIndex for O(n) performance where n = depositor's escrows, rather
+    /// than scanning all escrows O(N). For queries without a depositor filter, it scans
+    /// the global EscrowIndex.
+    ///
+    /// # Filter Semantics
+    /// - All active filters are combined with AND logic
+    /// - Inactive filters (has_*_filter = false) are ignored
+    /// - Amount filters use sentinel values: 0 for no min, i128::MAX for no max
+    /// - Deadline filters use sentinel values: 0 for no min, u64::MAX for no max
+    /// - Amount and deadline comparisons are inclusive
+    ///
+    /// # Pagination
+    /// - offset: Number of matching records to skip
+    /// - limit: Maximum number of records to return
+    /// - Pagination is stable and works correctly with any filter combination
+    ///
+    /// # Security Notes
+    /// - Read-only query function - no state modifications
+    /// - Does not require authentication
+    /// - Safe for public use - only exposes already-public escrow data
+    pub fn query_escrows(
+        env: Env,
+        filter: EscrowQueryFilter,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<EscrowWithId> {
+        // Optimization: use depositor index when depositor filter is active
+        let index: Vec<u64> = if filter.has_depositor_filter {
+            env.storage()
+                .persistent()
+                .get(&DataKey::DepositorIndex(filter.depositor.clone()))
+                .unwrap_or(Vec::new(&env))
+        } else {
+            env.storage()
+                .persistent()
+                .get(&DataKey::EscrowIndex)
+                .unwrap_or(Vec::new(&env))
+        };
+
+        let mut results = Vec::new(&env);
+        let mut count = 0u32;
+        let mut skipped = 0u32;
+
+        for i in 0..index.len() {
+            if count >= limit {
+                break;
+            }
+
+            let bounty_id = index.get(i).unwrap();
+            if let Some(escrow) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Escrow>(&DataKey::Escrow(bounty_id))
+            {
+                // Apply all active filters
+                let mut matches = true;
+
+                // Status filter
+                if filter.has_status_filter {
+                    if escrow.status != filter.status {
+                        matches = false;
+                    }
+                }
+
+                // Depositor filter (only needed if using global index)
+                if filter.has_depositor_filter {
+                    // When using depositor index, this is redundant but kept for correctness
+                    // when global index is used
+                    if escrow.depositor != filter.depositor {
+                        matches = false;
+                    }
+                }
+
+                // Min amount filter (0 means no minimum)
+                if filter.min_amount > 0 && escrow.amount < filter.min_amount {
+                    matches = false;
+                }
+
+                // Max amount filter (i128::MAX means no maximum)
+                if filter.max_amount < i128::MAX && escrow.amount > filter.max_amount {
+                    matches = false;
+                }
+
+                // Min deadline filter (0 means no minimum)
+                if filter.min_deadline > 0 && escrow.deadline < filter.min_deadline {
+                    matches = false;
+                }
+
+                // Max deadline filter (u64::MAX means no maximum)
+                if filter.max_deadline < u64::MAX && escrow.deadline > filter.max_deadline {
+                    matches = false;
+                }
+
+                if matches {
+                    if skipped < offset {
+                        skipped += 1;
+                        continue;
+                    }
+                    results.push_back(EscrowWithId { bounty_id, escrow });
+                    count += 1;
+                }
             }
         }
         results
