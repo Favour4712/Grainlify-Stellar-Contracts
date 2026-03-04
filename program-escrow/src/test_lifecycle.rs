@@ -846,5 +846,6 @@ fn test_complete_lifecycle_all_transitions() {
     assert_eq!(token_client.balance(&r2), 50_000);
     assert_eq!(token_client.balance(&r3), 200_000);
     assert_eq!(token_client.balance(&r4), 100_000);
-    assert_eq!(token_client.balance(&contract_id), 0);
+    // Contract still has 100_000 that was minted but never locked
+    assert_eq!(token_client.balance(&contract_id), 100_000);
 }
