@@ -52,6 +52,53 @@ fn assert_event_data_has_v2_tag(env: &Env, data: &Val) {
     assert_eq!(version, 2);
 }
 
+fn get_u32_event_field(env: &Env, data: &Val, field: &str) -> Option<u32> {
+    let data_map: Map<Symbol, Val> = Map::try_from_val(env, data).ok()?;
+    let field_val = data_map.get(Symbol::new(env, field))?;
+    u32::try_from_val(env, &field_val).ok()
+}
+
+fn get_batch_gas_proxy_metrics(
+    env: &Env,
+    client: &ProgramEscrowContractClient,
+) -> Option<(u32, u32, u32, u32, u32)> {
+    let events = env.events().all();
+    for (contract, _topics, data) in events.iter() {
+        if contract != client.address {
+            continue;
+        }
+
+        let transfer_ops = get_u32_event_field(env, &data, "gas_proxy_transfer_ops");
+        let history_appends = get_u32_event_field(env, &data, "gas_proxy_history_appends");
+        let storage_reads = get_u32_event_field(env, &data, "gas_proxy_storage_reads");
+        let storage_writes = get_u32_event_field(env, &data, "gas_proxy_storage_writes");
+        let events_emitted = get_u32_event_field(env, &data, "gas_proxy_events_emitted");
+
+        if let (
+            Some(transfer_ops),
+            Some(history_appends),
+            Some(storage_reads),
+            Some(storage_writes),
+            Some(events_emitted),
+        ) = (
+            transfer_ops,
+            history_appends,
+            storage_reads,
+            storage_writes,
+            events_emitted,
+        ) {
+            return Some((
+                transfer_ops,
+                history_appends,
+                storage_reads,
+                storage_writes,
+                events_emitted,
+            ));
+        }
+    }
+    None
+}
+
 #[test]
 fn test_init_program_and_event() {
     let env = Env::default();
@@ -250,6 +297,62 @@ fn test_gas_proxy_batch_vs_single_event_efficiency() {
     let batch_events = env_batch.events().all().len() - batch_before;
 
     assert!(batch_events <= single_events);
+}
+
+#[test]
+fn test_batch_payout_stress_large_batch_event_footprint_is_bounded() {
+    let env = Env::default();
+    let (client, _admin, _token_client, _token_admin) = setup_program(&env, 5_000_000);
+
+    let batch_size = 80_u32;
+    let mut recipients = vec![&env];
+    let mut amounts = vec![&env];
+    for _ in 0..batch_size {
+        recipients.push_back(Address::generate(&env));
+        amounts.push_back(10_000i128);
+    }
+
+    let events_before = env.events().all().len();
+    let data = client.batch_payout(&recipients, &amounts);
+    let events_after = env.events().all().len();
+
+    assert_eq!(data.payout_history.len(), batch_size);
+    assert_eq!(events_after - events_before, 1);
+
+    let (transfer_ops, history_appends, storage_reads, storage_writes, events_emitted) =
+        get_batch_gas_proxy_metrics(&env, &client).expect("batch gas proxy metrics missing");
+    assert_eq!(transfer_ops, batch_size);
+    assert_eq!(history_appends, batch_size);
+    assert_eq!(storage_reads, 1);
+    assert_eq!(storage_writes, 1);
+    assert_eq!(events_emitted, 1);
+}
+
+#[test]
+fn test_batch_payout_gas_proxy_improves_vs_legacy_model_for_large_batch() {
+    let env = Env::default();
+    let (client, _admin, _token_client, _token_admin) = setup_program(&env, 4_000_000);
+
+    let batch_size = 64_u32;
+    let mut recipients = vec![&env];
+    let mut amounts = vec![&env];
+    for _ in 0..batch_size {
+        recipients.push_back(Address::generate(&env));
+        amounts.push_back(10_000i128);
+    }
+
+    client.batch_payout(&recipients, &amounts);
+
+    let (transfer_ops, history_appends, storage_reads, storage_writes, events_emitted) =
+        get_batch_gas_proxy_metrics(&env, &client).expect("batch gas proxy metrics missing");
+    let optimized_proxy =
+        transfer_ops + history_appends + storage_reads + storage_writes + events_emitted;
+
+    // Legacy model proxy: transfer + history append + recipient/amount indexed reads
+    // plus cloned ProgramData and cloned payout history.
+    let legacy_proxy = (batch_size * 3) + 2;
+
+    assert!(optimized_proxy < legacy_proxy);
 }
 
 #[test]
