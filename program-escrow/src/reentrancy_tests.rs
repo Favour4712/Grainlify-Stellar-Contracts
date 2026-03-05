@@ -451,18 +451,16 @@ fn test_guard_cleared_after_successful_payout() {
     token_client.transfer(&authorized_key, &contract_id, &amount);
     client.lock_program_funds(&amount);
 
-    // Guard should not be set initially (check in contract context)
-    env.as_contract(&contract_id, || {
-        assert!(!is_entered(&env));
-    });
+    // Guard should not be set initially
+    let initially_set = env.as_contract(&contract_id, || is_entered(&env));
+    assert!(!initially_set);
 
     // Execute payout
     client.single_payout(&recipient, &(amount / 2));
 
     // Guard should be cleared after successful execution
-    env.as_contract(&contract_id, || {
-        assert!(!is_entered(&env));
-    });
+    let after_payout = env.as_contract(&contract_id, || is_entered(&env));
+    assert!(!after_payout);
 }
 
 #[test]
@@ -491,26 +489,18 @@ fn test_guard_state_across_multiple_operations() {
     client.lock_program_funds(&total_amount);
 
     // Verify guard state through multiple operations
-    env.as_contract(&contract_id, || {
-        assert!(!is_entered(&env));
-    });
+    assert!(!env.as_contract(&contract_id, || is_entered(&env)));
 
     client.single_payout(&recipient1, &300_0000000i128);
-    env.as_contract(&contract_id, || {
-        assert!(!is_entered(&env));
-    });
+    assert!(!env.as_contract(&contract_id, || is_entered(&env)));
 
     let recipients = vec![&env, recipient2];
     let amounts = vec![&env, 200_0000000i128];
     client.batch_payout(&recipients, &amounts);
-    env.as_contract(&contract_id, || {
-        assert!(!is_entered(&env));
-    });
+    assert!(!env.as_contract(&contract_id, || is_entered(&env)));
 
     client.single_payout(&recipient1, &100_0000000i128);
-    env.as_contract(&contract_id, || {
-        assert!(!is_entered(&env));
-    });
+    assert!(!env.as_contract(&contract_id, || is_entered(&env)));
 }
 
 // ============================================================================
